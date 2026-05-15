@@ -75,16 +75,21 @@ class Ku:
             if len(split_hanlo) != len(split_lomaji):
                 han_output = []
                 tran_output = []
-                for h, t in zip(split_hanlo, split_lomaji):
+                max_len = max(len(split_hanlo), len(split_lomaji))
+
+                for i in range(max_len):
+                    h = split_hanlo[i] if i < len(split_hanlo) else ''
+                    t = split_lomaji[i] if i < len(split_lomaji) else ''
                     han_len = sum(1 if is_lomaji(c) else 2 for c in h)
                     common_len = max(han_len, len(normalize_taibun(t)))
                     han_output.append(h.ljust(common_len - len(h)))
                     tran_output.append(t.ljust(common_len))
-                print(f"{' | '.join(han_output)}\n{' | '.join(tran_output)}")
+
                 raise TuiBeTse(
-                    'Kù bô pênn tn̂g: '
-                    'Hanlo tn̂g {} jī, m̄-koh lomaji tn̂g {} jī'
-                    .format(len(split_hanlo), len(split_lomaji))
+                    f'tokens not matched: '
+                    f'Hanlo tokens: {len(split_hanlo)}, lomaji tokens: {len(split_lomaji)}\n'
+                    f"{' | '.join(han_output)}\n{' | '.join(tran_output)}\n"
+                    f"{hanlo}\n{lomaji}"
                 )
 
             grouped_hanlo, _ = self._group_words(
