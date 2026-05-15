@@ -5,10 +5,10 @@ import re
 from unicodedata import normalize
 
 
-LIAN_JI_HU = '-'
-KHIN_SIANN_HU = '--'
+CONNECT_SYMBOL = '-'
+NEUTRAL_SYMBOL = '--'
 # 句中是為著加速標音
-句中標點符號 = {
+PUNC_IN_SENT = {
     '、', '﹑', '､', '-', '—', '~', '～',
     '·', '‧',  # 外國人名中間
     "'", '＇', '"', '‘', '’', '“', '”', '〝', '〞', '′', '‵',
@@ -21,7 +21,7 @@ KHIN_SIANN_HU = '--'
 }
 
 # 斷句是考慮著翻譯，閣有語音合成愛做的正規化
-斷句標點符號 = (
+PUNC_NEW_SENT = (
     {'\n', } |
     {'，', '。', '．', '！', '？', '…', '……', '...', } |
     {',', '.', '!', '?', } |
@@ -34,7 +34,7 @@ NON_PRINTABLE_CHARS = re.compile(
 )
 
 
-# Siann-tiāu
+# Siann-tiāu / TONE
 HAGFA_TIAU = {
     '', 'ˊ', 'ˋ', 'ˇ', '+', '^'
 }
@@ -57,33 +57,33 @@ KIP_TSOJI = {
     '\uF5E7': '\U000308FB',
 }
 
-聲調符號 = (
+TONE_SYMBOL = (
     HAGFA_TIAU |
     set(NGOO_SIU_LE.values())
 ) - {''}
 
 
-標點符號 = 句中標點符號 | 斷句標點符號
+PUNC = PUNC_IN_SENT | PUNC_NEW_SENT
 
-組字式符號 = '⿰⿱⿲⿳⿴⿵⿶⿷⿸⿹⿺⿻⿿'
+COMPOSITION_SYMBOL = '⿰⿱⿲⿳⿴⿵⿶⿷⿸⿹⿺⿻⿿'
 
 # Ll　小寫， Lu　大寫， Md　數字， Mn　有調號英文，Lo　其他, So 組字式符號…
 _統一碼羅馬字類 = {'Ll', 'Lu', 'Mn'}
 
 
-def si_lomaji(jiguan):
-    return 敢是拼音字元(jiguan) or jiguan.isdigit()
+def is_lomaji(jiguan):
+    return is_roman(jiguan) or jiguan.isdigit()
 
 
-def 敢是拼音字元(字元):
+def is_roman(char):
     try:
-        種類 = unicodedata.category(字元)
+        種類 = unicodedata.category(char)
     except TypeError:
         return False
-    return 種類 in _統一碼羅馬字類 or 字元 in ['ⁿ', "'", '_', 'ᴺ', ]
+    return 種類 in _統一碼羅馬字類 or char in ['ⁿ', "'", '_', 'ᴺ', ]
 
 
-def 敢是注音符號(字元):
+def is_bopomofo(字元):
     return unicodedata.name(字元, '').startswith('BOPOMOFO LETTER')
 
 

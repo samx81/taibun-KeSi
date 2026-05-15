@@ -1,19 +1,19 @@
 import unicodedata
-from kesi.susia.kongke import thiah, tshiau_tuasiosia, SuSiaTshoNgoo
-from kesi.butkian.kongiong import KHIN_SIANN_HU
+from kesi.susia.kongke import parse_syllable, apply_case_style, RomanizationParseError
+from kesi.butkian.kongiong import NEUTRAL_SYMBOL
 
 
-def tsuanTL(bun):
-    si_khinsiann = bun.startswith(KHIN_SIANN_HU)
-    if si_khinsiann:
-        bun = bun.replace(KHIN_SIANN_HU, '')
+def toTL(text):
+    is_neutral = text.startswith(NEUTRAL_SYMBOL)
+    if is_neutral:
+        text = text.replace(NEUTRAL_SYMBOL, '')
     try:
-        siann, un, tiau, tuasiosia = thiah(bun)
-    except SuSiaTshoNgoo:
-        return bun
-    tailo = kapTL(siann, un, tiau)
-    kiatko = tshiau_tuasiosia(tuasiosia, tailo)
-    if si_khinsiann:
+        initial, final, tone, case_style = parse_syllable(text)
+    except RomanizationParseError:
+        return text
+    tailo = kapTL(initial, final, tone)
+    kiatko = apply_case_style(case_style, tailo)
+    if is_neutral:
         kiatko = '--{}'.format(kiatko)
     return kiatko
 

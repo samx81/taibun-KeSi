@@ -1,29 +1,29 @@
 import unicodedata
 import re
 
-from kesi.butkian.kongiong import KHIN_SIANN_HU
-from kesi.susia.kongke import thiah, tshiau_tuasiosia, SuSiaTshoNgoo
+from kesi.butkian.kongiong import NEUTRAL_SYMBOL
+from kesi.susia.kongke import parse_syllable, apply_case_style, RomanizationParseError
 
 
-def tsuanPOJ(bun):
-    si_khinsiann = bun.startswith(KHIN_SIANN_HU)
-    if si_khinsiann:
-        bun = bun.replace(KHIN_SIANN_HU, '')
+def toPOJ(text):
+    is_neutral = text.startswith(NEUTRAL_SYMBOL)
+    if is_neutral:
+        text = text.replace(NEUTRAL_SYMBOL, '')
     try:
-        siann, un, tiau, tuasiosia = thiah(bun)
-    except SuSiaTshoNgoo:
-        return bun
-    poj = kapPOJ(siann, un, tiau)
-    kiatko = tshiau_tuasiosia(tuasiosia, poj)
-    if si_khinsiann:
+        initial, final, tone, case_style = parse_syllable(text)
+    except RomanizationParseError:
+        return text
+    poj = kapPOJ(initial, final, tone)
+    kiatko = apply_case_style(case_style, poj)
+    if is_neutral:
         kiatko = '--{}'.format(kiatko)
     return kiatko
 
 
-def kapPOJ(siann, un, tiau):
+def kapPOJ(initial, final, tone):
     return unicodedata.normalize(
         'NFC',
-        臺羅數字調轉白話字.轉白話字(siann, un, tiau)
+        臺羅數字調轉白話字.轉白話字(initial, final, tone)
     )
 
 

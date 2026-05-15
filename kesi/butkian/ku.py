@@ -1,7 +1,16 @@
 import re
+from typing import Literal
 
-from kesi.butkian.kongiong import 組字式符號, 聲調符號, 標點符號, 敢是拼音字元, \
-    敢是注音符號, LIAN_JI_HU, si_lomaji, normalize_taibun
+from kesi.butkian.kongiong import (
+    COMPOSITION_SYMBOL,
+    CONNECT_SYMBOL,
+    TONE_SYMBOL,
+    PUNC,
+    is_roman,
+    is_bopomofo,
+    is_lomaji,
+    normalize_taibun,
+)
 from kesi.butkian.su import Su
 from kesi.butkian.ji import Ji
 
@@ -16,13 +25,15 @@ class Ku:
         for ji in su:
             for guan in ji.hanlo:
     """
-    _切組物件分詞 = re.compile('(([^ ｜]*[^ ]｜[^ ][^ ｜]*) ?|[^ ]+)')
-    _是空白 = re.compile(r'[^\S\n]+')
-    _是分字符號 = re.compile('{}+'.format(LIAN_JI_HU))
-    _是數字 = set('0123456789')
-    _是多字元標點 = re.compile(r'(\.\.\.)|(……)|(──)')
+    
+    _split_word_pattern = re.compile('(([^ ｜]*[^ ]｜[^ ][^ ｜]*) ?|[^ ]+)')
+    _whitespace_pattern = re.compile(r'[^\S\n]+')
+    _hyphen_pattern = re.compile(r'{}+'.format(CONNECT_SYMBOL))
+    _digit_chars = set('0123456789')
+    _multi_char_punctuation = re.compile(r'(\.\.\.)|(……)|(──)')
 
-    def __init__(self, hanlo=None, lomaji=None):
+    def __init__(self, hanlo=None, lomaji=None, remove_han_dash=False):
+        self.remove_han_dash = remove_han_dash
         if hanlo is not None:
             hanlo = normalize_taibun(hanlo)
         if lomaji is not None:
@@ -36,31 +47,63 @@ class Ku:
         if hanlo is None:
             self._su = []
         elif lomaji is None:
-            tngji, tngji_khinsiann, si_bokangsu = (
-                self._hunsik_tngji_tngsu(hanlo)
-            )
-            bun, khinsiann = self._tngsu(tngji, tngji_khinsiann, si_bokangsu)
-            self._su = self._bun_tsuan_sutin(bun, khinsiann)
-        else:
-            """ 以羅馬字ê斷字斷詞為主，漢羅文--ê無效 """
-            tnghanlo, _ps, _ps = self._hunsik_tngji_tngsu(hanlo)
-            tnglomaji, tngji_khinsiann, si_bokangsu = (
-                self._hunsik_tngji_tngsu(lomaji)
+            (
+                split_chars,
+                char_neutral_tone_flags,
+                word_boundary_flags,
+            ) = self._analyze_sentence(hanlo)
+
+            word_chunks, neutral_tone_chunks = self._group_words(
+                split_chars,
+                char_neutral_tone_flags,
+                word_boundary_flags,
             )
 
-            if len(tnghanlo) != len(tnglomaji):
+            self._su = self._build_su_list(word_chunks, neutral_tone_chunks)
+
+        else:
+            """Use romanization segmentation as primary source"""
+
+            split_hanlo, _, _ = self._analyze_sentence(hanlo)
+
+            (
+                split_lomaji,
+                char_neutral_tone_flags,
+                word_boundary_flags,
+            ) = self._analyze_sentence(lomaji)
+
+            if len(split_hanlo) != len(split_lomaji):
+                han_output = []
+                tran_output = []
+                for h, t in zip(split_hanlo, split_lomaji):
+                    han_len = sum(1 if is_lomaji(c) else 2 for c in h)
+                    common_len = max(han_len, len(normalize_taibun(t)))
+                    han_output.append(h.ljust(common_len - len(h)))
+                    tran_output.append(t.ljust(common_len))
+                print(f"{' | '.join(han_output)}\n{' | '.join(tran_output)}")
                 raise TuiBeTse(
                     'Kù bô pênn tn̂g: '
                     'Hanlo tn̂g {} jī, m̄-koh lomaji tn̂g {} jī'
-                    .format(len(tnghanlo), len(tnglomaji)))
+                    .format(len(split_hanlo), len(split_lomaji))
+                )
 
-            hanlo_tin, _ps = self._tngsu(
-                tnghanlo, tngji_khinsiann, si_bokangsu)
-            lomaji_tin, khinsiann = self._tngsu(
-                tnglomaji, tngji_khinsiann, si_bokangsu)
+            grouped_hanlo, _ = self._group_words(
+                split_hanlo,
+                char_neutral_tone_flags,
+                word_boundary_flags,
+            )
 
-            self._su = self._phe_tsuan_sutin(
-                hanlo_tin, lomaji_tin, khinsiann)
+            grouped_lomaji, neutral_tones = self._group_words(
+                split_lomaji,
+                char_neutral_tone_flags,
+                word_boundary_flags,
+            )
+
+            self._su = self._build_paired_su_list(
+                grouped_hanlo,
+                grouped_lomaji,
+                neutral_tones,
+            )
 
     def __str__(self):
         return self.hanlo
@@ -68,8 +111,8 @@ class Ku:
     def __iter__(self):
         yield from self._su
 
-    def __getitem__(self, kui):
-        return self._su[kui]
+    def __getitem__(self, index):
+        return self._su[index]
 
     def __len__(self):
         return len(self._su)
@@ -77,387 +120,355 @@ class Ku:
     def __eq__(self, other):
         return self._su == other._su
 
-    def _bun_tsuan_sutin(self, bun_tin, khinsiann_tin):
-        sutin = []
-        for tsitsu, khinsiann in zip(bun_tin, khinsiann_tin):
+    def _build_su_list(self, words, word_neutral_tones):
+        su_list = []
+        for word, neutral_tones in zip(words, word_neutral_tones):
             su = Su()
-            for ji, si_khinsiann in zip(tsitsu, khinsiann):
-                su.thiam(
-                    Ji(ji, si_khinsiann=si_khinsiann)
+            for char, is_neutral_tone in zip(word, neutral_tones):
+                su.append(
+                    Ji(char, is_neutral=is_neutral_tone)
                 )
-            sutin.append(su)
-        return sutin
+            su_list.append(su)
+        return su_list
 
-    def _phe_tsuan_sutin(self, hanlo_tin, lomaji_tin, khinsiann_tin):
-        sutin = []
-        for suhanlo_tin, sulomaji_tin, khinsiann in zip(
-                hanlo_tin, lomaji_tin, khinsiann_tin):
+    def _build_paired_su_list(self, hanlo_words, lomaji_words, word_neutral_tones):
+        su_list = []
+        for hanlo, lomaji, neutral_tones in zip(
+                hanlo_words, lomaji_words, word_neutral_tones):
             su = Su()
-            for jihanlo, jilomaji, si_khinsiann in zip(
-                    suhanlo_tin, sulomaji_tin, khinsiann):
-                su.thiam(
-                    Ji(jihanlo, lomaji=jilomaji,
-                        si_khinsiann=si_khinsiann)
+            for char, lomaji_char, is_neutral_tone in zip(
+                    hanlo, lomaji, neutral_tones):
+                su.append(
+                    Ji(char, lomaji=lomaji_char,
+                        is_neutral=is_neutral_tone)
                 )
-            sutin.append(su)
-        return sutin
+            su_list.append(su)
+        return su_list
+    
+    def format_string(self, mode: Literal['hanlo', 'lomaji', 'kiphanlo'], remove_dash=False):
+        """
+        Normalize text:
+        preserve romanization spaces,
+        remove unnecessary spaces elsewhere.
+        """
+
+        output = []
+        prev_word_endswith_lomaji = False
+        for su in self:
+            # print(su, remove_dash)
+            su.remove_han_dash = remove_dash
+            word = getattr(su, mode)
+            if not word:
+                continue
+            #
+            #  判斷愛先添空白符無
+            #    H, H -> 'HH'
+            #    H, L -> 'HL'
+            #    L, L -> 'L L'
+            #
+            if prev_word_endswith_lomaji and is_lomaji(word[0]):
+                output.append(' ')
+            output.append(word)
+            prev_word_endswith_lomaji = is_lomaji(word[-1])
+        return ''.join(output)
+
 
     @property
     def hanlo(self):
-        """
-          會 kā 文本標準化：
-          保留羅馬字 ê 空白，tshun--ê 空白會刣掉
-        """
-        bun = []
-        頂一詞上尾是羅馬字 = False
-        for su in self:
-            suhanlo = su.hanlo
-            #
-            #  判斷愛先添空白符無
-            #    H, H -> 'HH'
-            #    H, L -> 'HL'
-            #    L, L -> 'L L'
-            #
-            if 頂一詞上尾是羅馬字 and si_lomaji(suhanlo[0]):
-                bun.append(' ')
-            bun.append(suhanlo)
-            頂一詞上尾是羅馬字 = si_lomaji(suhanlo[-1])
-        return ''.join(bun)
+        print(self.remove_han_dash)
+        return self.format_string('hanlo', self.remove_han_dash)
 
     @property
     def lomaji(self):
-        """
-          會 kā 文本標準化：
-          保留羅馬字 ê 空白，tshun--ê 空白會刣掉
-        """
-        bun = []
-        頂一詞上尾是羅馬字 = False
-        for su in self:
-            sulomaji = su.lomaji
-            #
-            #  判斷愛先添空白符無
-            #    H, H -> 'HH'
-            #    H, L -> 'HL'
-            #    L, L -> 'L L'
-            #
-            if 頂一詞上尾是羅馬字 and si_lomaji(sulomaji[0]):
-                bun.append(' ')
-            bun.append(sulomaji)
-            頂一詞上尾是羅馬字 = si_lomaji(sulomaji[-1])
-        return ''.join(bun)
+        return self.format_string('lomaji')
 
     @property
     def kiphanlo(self):
-        """
-          會 kā 文本標準化：
-          保留羅馬字 ê 空白，tshun--ê 空白會刣掉
-        """
-        bun = []
-        頂一詞上尾是羅馬字 = False
-        for su in self:
-            suhanlo = su.kiphanlo
-            #
-            #  判斷愛先添空白符無
-            #    H, H -> 'HH'
-            #    H, L -> 'HL'
-            #    L, L -> 'L L'
-            #
-            if 頂一詞上尾是羅馬字 and si_lomaji(suhanlo[0]):
-                bun.append(' ')
-            bun.append(suhanlo)
-            頂一詞上尾是羅馬字 = si_lomaji(suhanlo[-1])
-        return ''.join(bun)
+        return self.format_string('kiphanlo')
 
-    def thianji(self):
+    def iter_chars(self):
         """
-        =臺灣言語工具.拆文分析器.篩出字物件
+        Equivalent to:
+        臺灣言語工具.拆文分析器.篩出字物件
         """
-        for tsit_su in self:
-            yield from tsit_su
-
-    def thiam(self, su):
-        self._su.append(su)
+        for word in self:
+            yield from word
 
     def POJ(self):
-        sin_ku = Ku()
-        for su in self:
-            sin_ku.thiam(su.POJ())
-        return sin_ku
+        self._su = [su.POJ() for su in self]
+        return self
 
     def TL(self):
-        sin_ku = Ku()
-        for su in self:
-            sin_ku.thiam(su.TL())
-        return sin_ku
+        self._su = [su.TL() for su in self]
+        return self
 
     KIP = TL
 
-    def _tngsu(self, 字陣列, 輕聲陣列, 佮後一个字無仝一个詞):
-        巢狀詞陣列 = []
-        巢狀輕聲陣列 = []
-        位置 = 0
-        while 位置 < len(字陣列):
-            範圍 = 位置
-            while 範圍 < len(佮後一个字無仝一个詞) and not 佮後一个字無仝一个詞[範圍]:
-                範圍 += 1
-            範圍 += 1
-            巢狀詞陣列.append(字陣列[位置:範圍])
-            巢狀輕聲陣列.append(輕聲陣列[位置:範圍])
-            位置 = 範圍
-        return 巢狀詞陣列, 巢狀輕聲陣列
+    def _group_words(self, char_list, neutral_tone_flags,word_boundary_flags):
+        grouped_words = []
+        grouped_neutral_tones = []
+        index = 0
+        while index < len(char_list):
+            end = index
+            while end < len(word_boundary_flags) and not word_boundary_flags[end]:
+                end += 1
+            end += 1
+            grouped_words.append(char_list[index:end])
+            grouped_neutral_tones.append(neutral_tone_flags[index:end])
+            index = end
+        return grouped_words, grouped_neutral_tones
 
-    def _hunsik_tngji_tngsu(self, 語句):
-        狀態 = self._分析狀態()
-        if self._是空白.fullmatch(語句):
-            return 狀態.分析結果()
-        頂一个字 = None
-        頂一个是連字符 = False
-        頂一个是空白 = False
-        頂一个是輕聲符號 = False
-        頂一个是注音符號 = False
-        位置 = 0
-        while 位置 < len(語句):
-            字 = 語句[位置]
-            是連字符 = False
-            是空白 = False
-            是輕聲符號 = False
-            是注音符號 = 敢是注音符號(字)
-            if 狀態.是組字模式():
-                狀態.這馬字加一个字元(字)
-                狀態.組字模型加一个字元(字)
-                if 狀態.組字長度有夠矣未():
-                    狀態.這馬字好矣清掉囥入去字陣列()
-                    狀態.變一般模式()
-            elif 狀態.是一般模式():
-                揣分字 = self._是分字符號.match(語句[位置:])
-                if 揣分字:
-                    # Hyphen
-                    狀態.這馬字好矣清掉囥入去字陣列()
-                    分字長度 = len(揣分字.group(0))
-                    if 分字長度 == 1:
-                        # LIAN_JI_HU
-                        if not 狀態.敢有分析資料矣() or 頂一个是空白:
-                            狀態.字陣列直接加一字(LIAN_JI_HU)
-                            狀態.頂一字佮這馬的字無仝詞()
+    def _analyze_sentence(self, sentence):
+        state = self._ParserState()
+        if self._whitespace_pattern.fullmatch(sentence):
+            return state.result()
+        previous_char = None
+        previous_was_hyphen = False
+        previous_was_whitespace = False
+        previous_was_neutral_tone_symbol = False
+        previous_was_bopomofo = False
+        index = 0
+        while index < len(sentence):
+            char = sentence[index]
+            is_hyphen = False
+            is_whitespace = False
+            is_neutral_tone_symbol = False
+            is_char_bopomofo = is_bopomofo(char)
+            if state.is_composition_mode():
+                state.add_char_to_current(char)
+                state.add_composition_char(char)
+                if state.is_composition_complete():
+                    state.flush_current_char()
+                    state.switch_to_normal_mode()
+            elif state.is_normal_mode():
+                hyphen_match = self._hyphen_pattern.match(sentence[index:])
+                if hyphen_match:
+                    state.flush_current_char()
+                    hyphen_length = len(hyphen_match.group(0))
+                    if hyphen_length == 1:
+                        if not state.has_data() or previous_was_whitespace:
+                            state.add_direct_char(CONNECT_SYMBOL)
+                            state.mark_word_boundary()
                         else:
-                            狀態.頂一字佮這馬的字仝詞()
-                            是連字符 = True
-                            狀態.有連字符()
-                    elif 分字長度 == 2:
-                        是輕聲符號 = True
-                        狀態.這陣是輕聲詞()
-                        if not 頂一个是空白:
+                            state.mark_same_word()
+                            is_hyphen = True
+                            state.mark_has_hyphen()
+                    elif hyphen_length == 2:
+                        is_neutral_tone_symbol = True
+                        state.mark_neutral_tone_word()
+                        if not previous_was_whitespace:
                             # hó --lah -> ['hó', '--lah']
                             # hó--lah -> ['hó--lah']
-                            狀態.頂一字佮這馬的字仝詞()
+                            state.mark_same_word()
                     else:
-                        for _ in range(分字長度):
-                            狀態.字陣列直接加一字(LIAN_JI_HU)
-                            狀態.頂一字佮這馬的字無仝詞()
-                    位置 += 分字長度 - 1
-                elif self._是空白.fullmatch(字):
-                    狀態.這馬字好矣清掉囥入去字陣列()
-                    狀態.頂一字佮這馬的字無仝詞()
-                    if 頂一个是連字符:
-                        狀態.字陣列直接加一字(LIAN_JI_HU)
-                        狀態.頂一字佮這馬的字無仝詞()
-                    if 頂一个是輕聲符號:
-                        狀態.字陣列直接加一字(LIAN_JI_HU)
-                        狀態.頂一字佮這馬的字無仝詞()
-                        狀態.字陣列直接加一字(LIAN_JI_HU)
-                        狀態.頂一字佮這馬的字無仝詞()
-                    是空白 = True
+                        for _ in range(hyphen_length):
+                            state.add_direct_char(CONNECT_SYMBOL)
+                            state.mark_word_boundary()
+                    index += hyphen_length - 1
+                elif self._whitespace_pattern.fullmatch(char):
+                    state.flush_current_char()
+                    state.mark_word_boundary()
+                    if previous_was_hyphen or previous_was_neutral_tone_symbol:
+                        state.add_direct_char(CONNECT_SYMBOL)
+                        state.mark_word_boundary()
+                    if previous_was_neutral_tone_symbol:
+                        state.add_direct_char(CONNECT_SYMBOL)
+                        state.mark_word_boundary()
+                        state.add_direct_char(CONNECT_SYMBOL)
+                        state.mark_word_boundary()
+                    is_whitespace = True
                 # 羅馬字接做伙
-                elif 敢是拼音字元(字):
+                elif is_roman(char):
                     # 頭前是羅馬字抑是輕聲、外來語的數字
                     # 「N1N1」、「g0v」濫做伙名詞，「sui2sui2」愛變做兩个字，予粗胚處理。
                     if (
-                        not 敢是拼音字元(頂一个字) and
-                        頂一个字 not in self._是數字
+                        not is_roman(previous_char) and
+                        previous_char not in self._digit_chars
                     ):
                         # 頭前愛清掉
-                        狀態.這馬字好矣清掉囥入去字陣列()
-                        狀態.頂一字佮這馬的字無仝詞()
-                    if 頂一个是輕聲符號:
-                        狀態.這馬是輕聲字()
+                        state.flush_current_char()
+                        state.mark_word_boundary()
+                    if previous_was_neutral_tone_symbol:
+                        state.mark_current_as_neutral_tone()
 
-                    狀態.這馬字加一个字元(字)
+                    state.add_char_to_current(char)
                 # 數字
-                elif 字 in self._是數字:
+                elif char in self._digit_chars:
                     if (
-                        頂一个字 not in self._是數字 and
-                        not 敢是拼音字元(頂一个字) and
-                        not 頂一个是注音符號
+                        previous_char not in self._digit_chars and
+                        not is_roman(previous_char) and
+                        not previous_was_bopomofo
                     ):
-                        狀態.這馬字好矣清掉囥入去字陣列()
-                        狀態.頂一字佮這馬的字無仝詞()
-                    狀態.這馬字加一个字元(字)
+                        state.flush_current_char()
+                        state.mark_word_boundary()
+                    state.add_char_to_current(char)
                 # 音標後壁可能有聲調符號 uainnˊ
-                elif 字 in 聲調符號 and 敢是拼音字元(頂一个字):
-                    狀態.這馬字加一个字元(字)
+                elif char in TONE_SYMBOL and is_roman(previous_char):
+                    state.add_char_to_current(char)
                 # 處理注音，輕聲、注音、空三个後壁會當接注音
-                elif 是注音符號:
+                elif is_char_bopomofo:
                     if (
-                        頂一个字 not in 聲調符號 and
-                        not 頂一个是注音符號
+                        previous_char not in TONE_SYMBOL and
+                        not previous_was_bopomofo
                     ):
-                        狀態.這馬字好矣清掉囥入去字陣列()
-                    狀態.這馬字加一个字元(字)
+                        state.flush_current_char()
+                    state.add_char_to_current(char)
                 # 注音後壁會當接聲調
-                elif 字 in 聲調符號 and 頂一个是注音符號:
-                    狀態.這馬字加一个字元(字)
+                elif char in TONE_SYMBOL and previous_was_bopomofo:
+                    state.add_char_to_current(char)
 
-                elif 字 in 標點符號:
-                    揣著多字元標點 = self._是多字元標點.match(語句[位置:])
-                    if 字 == '•' and 狀態.上尾敢是o結尾():
-                        狀態.這馬字加一个字元(字)
-                    elif 揣著多字元標點:
-                        符號 = 揣著多字元標點.group(0)
-                        狀態.這馬字好矣清掉囥入去字陣列()
-                        狀態.頂一字佮這馬的字無仝詞()
-                        狀態.字陣列直接加一字(符號)
-                        狀態.頂一字佮這馬的字無仝詞()
-                        位置 += len(符號) - 1
+                elif char in PUNC:
+                    multi_punct_match = self._multi_char_punctuation.match(sentence[index:])
+                    if char == '•' and state.ends_with_o_sound():
+                        state.add_char_to_current(char)
+                    elif multi_punct_match:
+                        symbol = multi_punct_match.group(0)
+                        state.flush_current_char()
+                        state.mark_word_boundary()
+                        state.add_direct_char(symbol)
+                        state.mark_word_boundary()
+                        index += len(symbol) - 1
                     else:
-                        狀態.這馬字好矣清掉囥入去字陣列()
-                        狀態.頂一字佮這馬的字無仝詞()
-                        狀態.字陣列直接加一字(字)
-                        狀態.頂一字佮這馬的字無仝詞()
+                        state.flush_current_char()
+                        state.mark_word_boundary()
+                        state.add_direct_char(char)
+                        state.mark_word_boundary()
                 else:
-                    if 狀態.這馬字敢全部攏數字():
-                        狀態.這馬字好矣清掉囥入去字陣列()
-                        狀態.頂一字佮這馬的字無仝詞()
-                    elif 敢是拼音字元(頂一个字):
-                        狀態.這馬字好矣清掉囥入去字陣列()
-                        狀態.頂一字佮這馬的字無仝詞()
+                    if state.current_is_all_digits():
+                        state.flush_current_char()
+                        state.mark_word_boundary()
+                    elif is_roman(previous_char):
+                        state.flush_current_char()
+                        state.mark_word_boundary()
                     else:
-                        狀態.這馬字好矣清掉囥入去字陣列()
-                    if 頂一个是輕聲符號:
-                        狀態.這馬是輕聲字()
+                        state.flush_current_char()
+                    if previous_was_neutral_tone_symbol:
+                        state.mark_current_as_neutral_tone()
 
-                    狀態.這馬字加一个字元(字)
+                    state.add_char_to_current(char)
 
-                    if 字 in 組字式符號:
-                        狀態.變組字模式()
+                    if char in COMPOSITION_SYMBOL:
+                        state.switch_to_composition_mode()
                     else:
-                        狀態.這馬字好矣清掉囥入去字陣列()
-            位置 += 1
-            頂一个字 = 字
-            頂一个是連字符 = 是連字符
-            頂一个是空白 = 是空白
-            頂一个是輕聲符號 = 是輕聲符號
-            頂一个是注音符號 = 是注音符號
-        if 狀態.這馬字敢閣有物件():
-            if 狀態.是一般模式():
-                狀態.這馬字好矣清掉囥入去字陣列()
+                        state.flush_current_char()
+            index += 1
+            previous_char = char
+            previous_was_hyphen = is_hyphen
+            previous_was_whitespace = is_whitespace
+            previous_was_neutral_tone_symbol = is_neutral_tone_symbol
+            previous_was_bopomofo = is_char_bopomofo
+        if state.has_current_char():
+            if state.is_normal_mode():
+                state.flush_current_char()
             else:
-                raise 解析錯誤('語句組字式無完整，語句＝{0}'.format(str(語句)))
-        if 頂一个是連字符:
-            狀態.字陣列直接加一字(LIAN_JI_HU)
-            狀態.頂一字佮這馬的字無仝詞()
-        if 頂一个是輕聲符號:
-            狀態.字陣列直接加一字(LIAN_JI_HU)
-            狀態.頂一字佮這馬的字無仝詞()
-            狀態.字陣列直接加一字(LIAN_JI_HU)
-            狀態.頂一字佮這馬的字無仝詞()
-        return 狀態.分析結果()
+                raise 解析錯誤('語句組字式無完整，語句＝{0}'.format(str(sentence)))
+        if previous_was_hyphen:
+            state.add_direct_char(CONNECT_SYMBOL)
+            state.mark_word_boundary()
+        if previous_was_neutral_tone_symbol:
+            state.add_direct_char(CONNECT_SYMBOL)
+            state.mark_word_boundary()
+            state.add_direct_char(CONNECT_SYMBOL)
+            state.mark_word_boundary()
+        return state.result()
 
-    class _分析狀態:
+    class _ParserState:
 
         def __init__(self):
-            self._字陣列 = []
-            self._輕聲陣列 = []
-            self._佮後一个字無仝一个詞 = []
-            self.變一般模式()
+            self._char_list = []
+            self._neutral_tone_flags = []
+            self._word_boundary_flags = []
+            self.switch_to_normal_mode()
             # 組字式抑是數羅會超過一个字元
-            self._這馬字 = ''
-            self._這馬是輕聲字 = False
-            self._這陣是輕聲詞 = False
-            self._這陣是輕聲詞_而且是輕聲詞ê一部份 = False
+            self._current_char = ''
+            self._current_is_neutral_tone = False
+            self._inside_neutral_tone_word = False
+            self._neutral_tone_word_continues = False
 
-        def 分析結果(self):
-            return self._字陣列, self._輕聲陣列, self._佮後一个字無仝一个詞
+        def result(self):
+            return self._char_list, self._neutral_tone_flags, self._word_boundary_flags
 
-        def 敢有分析資料矣(self):
-            return len(self._字陣列) > 0 or self.這馬字敢閣有物件()
+        def has_data(self):
+            return len(self._char_list) > 0 or self.has_current_char()
 
-        def 這馬字敢閣有物件(self):
-            return self._這馬字 != ''
+        def has_current_char(self):
+            return self._current_char != ''
 
-        def 這馬字敢全部攏數字(self):
-            return self._這馬字.isdigit()
+        def current_is_all_digits(self):
+            return self._current_char.isdigit()
 
-        def 變一般模式(self):
-            self._模式 = '一般'
-            self._組字長度 = 0
+        def switch_to_normal_mode(self):
+            self._mode = 'normal'
+            self._composition_length = 0
 
-        def 變組字模式(self):
-            self._模式 = '組字'
-            self._組字長度 = -1
+        def switch_to_composition_mode(self):
+            self._mode = 'composition'
+            self._composition_length = -1
 
-        def 是一般模式(self):
-            return self._模式 == '一般'
+        def is_normal_mode(self):
+            return self._mode == 'normal'
 
-        def 是組字模式(self):
-            return self._模式 == '組字'
+        def is_composition_mode(self):
+            return self._mode == 'composition'
 
-        def 組字模型加一个字元(self, 字):
-            if 字 in 組字式符號:
-                self._組字長度 -= 1
+        def add_composition_char(self, char):
+            if char in COMPOSITION_SYMBOL:
+                self._composition_length -= 1
             else:
-                self._組字長度 += 1
+                self._composition_length += 1
 
-        def 組字長度有夠矣未(self):
-            return self._組字長度 == 1
+        def is_composition_complete(self):
+            return self._composition_length == 1
 
-        def 這馬字加一个字元(self, 字):
-            self._這馬字 += 字
+        def add_char_to_current(self, char):
+            self._current_char += char
 
-        def 這馬是輕聲字(self):
-            self._這馬是輕聲字 = True
+        def mark_current_as_neutral_tone(self):
+            self._current_is_neutral_tone = True
 
-        def 這陣是輕聲詞(self):
-            self._這陣是輕聲詞 = True
-            self._這陣是輕聲詞_而且是輕聲詞ê一部份 = True
+        def mark_neutral_tone_word(self):
+            self._inside_neutral_tone_word = True
+            self._neutral_tone_word_continues = True
 
-        def 有連字符(self):
-            if self._這陣是輕聲詞:
-                self._這陣是輕聲詞_而且是輕聲詞ê一部份 = True
+        def mark_has_hyphen(self):
+            if self._inside_neutral_tone_word:
+                self._neutral_tone_word_continues = True
 
-        def 字陣列直接加一字(self, 字):
-            self._字陣列.append(字)
-            self._輕聲陣列.append(False)
-            self._佮後一个字無仝一个詞.append(None)
+        def add_direct_char(self, char):
+            self._char_list.append(char)
+            self._neutral_tone_flags.append(False)
+            self._word_boundary_flags.append(None)
 
-        def 這馬字好矣清掉囥入去字陣列(self):
-            if self._這馬字 != '':
-                if self._這陣是輕聲詞:
-                    if not self._這陣是輕聲詞_而且是輕聲詞ê一部份:
-                        self.頂一字佮這馬的字無仝詞()
-                        self._這陣是輕聲詞 = False
-                    self._這陣是輕聲詞_而且是輕聲詞ê一部份 = False
-                self._字陣列.append(self._這馬字)
-                self._輕聲陣列.append(self._這馬是輕聲字)
-                self._佮後一个字無仝一个詞.append(None)
-                self._這馬字 = ''
-                self._這馬是輕聲字 = False
+        def flush_current_char(self):
+            if self._current_char != '':
+                if self._inside_neutral_tone_word:
+                    if not self._neutral_tone_word_continues:
+                        self.mark_word_boundary()
+                        self._inside_neutral_tone_word = False
+                    self._neutral_tone_word_continues = False
 
-        def 頂一字佮這馬的字仝詞(self):
+                self._char_list.append(self._current_char)
+                self._neutral_tone_flags.append(self._current_is_neutral_tone)
+                self._word_boundary_flags.append(None)
+                self._current_char = ''
+                self._current_is_neutral_tone = False
+
+        def mark_same_word(self):
             try:
-                self._佮後一个字無仝一个詞[-1] = False
+                self._word_boundary_flags[-1] = False
             except IndexError:
                 pass
 
-        def 頂一字佮這馬的字無仝詞(self):
+        def mark_word_boundary(self):
             try:
-                if self._佮後一个字無仝一个詞[-1] is None:
-                    self._佮後一个字無仝一个詞[-1] = True
+                if self._word_boundary_flags[-1] is None:
+                    self._word_boundary_flags[-1] = True
             except IndexError:
                 pass
 
-        def 上尾敢是o結尾(self):
+        def ends_with_o_sound(self):
             for o in ['o', 'ó', 'ò', 'ô', 'ǒ', 'ō', 'o̍', 'ő']:
-                if self._這馬字.endswith(o):
+                if self._current_char.endswith(o):
                     return True
             return False
 

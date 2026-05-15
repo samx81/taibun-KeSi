@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
-from kesi.butkian.kongiong import LIAN_JI_HU, si_lomaji
-from kesi.butkian.kongiong import KHIN_SIANN_HU
+from typing import Literal
+
+from kesi.butkian.kongiong import CONNECT_SYMBOL, is_lomaji
+from kesi.butkian.kongiong import NEUTRAL_SYMBOL
 
 
 class Su:
 
-    def __init__(self):
-        self._ji = []
+    def __init__(self, ji: list=None):
+        self._ji = ji if ji else []
+        self.remove_han_dash = False
 
     def __iter__(self):
         yield from self._ji
@@ -16,66 +19,52 @@ class Su:
 
     def __eq__(self, other):
         return self._ji == other._ji
+    
+    def format_string(self, mode: Literal['hanlo', 'lomaji']):
+        """
+        會 kā 文本標準化：
+        判斷愛先添連字符無
+          H, H -> 'HH'
+          H, L -> 'HL'
+          L, H -> 'LH'
+          L, L -> 'L-L'
+          L, --L -> 'L--L'
+        """
+        tokens = []
+        prev_char_is_lomaji = False
+        word_has_neutral = False
+
+        for char in self:
+            text = getattr(char, mode)
+            # print(text, not self.remove_han_dash,  not char.CJK)
+            # print(text, self.remove_han_dash, (mode == 'hanlo' and not self.remove_han_dash), (mode == 'lomaji' and not char.CJK))
+            # if (mode == 'hanlo' and not self.remove_han_dash) or \
+            #     (mode == 'lomaji' and not char.CJK):
+            if not self.remove_han_dash or not char.CJK:
+                if char.is_neutral:
+                    " Mài thinn liân-jī-hû "
+                    text = f"{NEUTRAL_SYMBOL}{text}"
+                    word_has_neutral = True
+                elif prev_char_is_lomaji and is_lomaji(text[0]):
+                    " L, L -> 'L-L' "
+                    tokens.append(CONNECT_SYMBOL)
+                elif word_has_neutral:
+                    " --H, H -> '--H-H' "
+                    tokens.append(CONNECT_SYMBOL)
+            else:
+                if prev_char_is_lomaji:
+                    tokens.append(" ")
+            tokens.append(text)
+            prev_char_is_lomaji = is_lomaji(text[-1])
+        return ''.join(tokens)
 
     @property
     def hanlo(self):
-        """
-        會 kā 文本標準化：
-        判斷愛先添連字符無
-          H, H -> 'HH'
-          H, L -> 'HL'
-          L, H -> 'LH'
-          L, L -> 'L-L'
-          L, --L -> 'L--L'
-        """
-        buntin = []
-        ting_ji_si_lomaji = False
-        su_u_khinsiann = False
-
-        for ji in self:
-            jihanlo = ji.hanlo
-            if ji.si_khinsiann:
-                " Mài thinn liân-jī-hû "
-                su_u_khinsiann = True
-            elif ting_ji_si_lomaji and si_lomaji(jihanlo[0]):
-                " L, L -> 'L-L' "
-                buntin.append(LIAN_JI_HU)
-            elif su_u_khinsiann:
-                " --H, H -> '--H-H' "
-                buntin.append(LIAN_JI_HU)
-            buntin.append(jihanlo)
-            ting_ji_si_lomaji = si_lomaji(jihanlo[-1])
-        return ''.join(buntin)
+        return self.format_string('hanlo')
 
     @property
     def lomaji(self):
-        """
-        會 kā 文本標準化：
-        判斷愛先添連字符無
-          H, H -> 'HH'
-          H, L -> 'HL'
-          L, H -> 'LH'
-          L, L -> 'L-L'
-          L, --L -> 'L--L'
-        """
-        buntin = []
-        ting_ji_si_lomaji = False
-        su_u_khinsiann = False
-
-        for ji in self:
-            jilomaji = ji.lomaji
-            if ji.si_khinsiann:
-                " Mài thinn liân-jī-hû "
-                su_u_khinsiann = True
-            elif ting_ji_si_lomaji and si_lomaji(jilomaji[0]):
-                " L, L -> 'L-L' "
-                buntin.append(LIAN_JI_HU)
-            elif su_u_khinsiann:
-                " --H, H -> '--H-H' "
-                buntin.append(LIAN_JI_HU)
-            buntin.append(jilomaji)
-            ting_ji_si_lomaji = si_lomaji(jilomaji[-1])
-        return ''.join(buntin)
+        return self.format_string('lomaji')
 
     @property
     def kiphanlo(self):
@@ -88,34 +77,31 @@ class Su:
           L, L -> 'L-L'
           L, --L -> 'L--L'
         """
-        buntin = []
-        ting_ji_si_lomaji = False
+        tokens = []
+        prev_char_is_lomaji = False
 
-        for ji in self:
-            jihanlo = ji.kiphanlo
-            if ting_ji_si_lomaji and si_lomaji(jihanlo[0]):
+        for w in self:
+            hanlo = w.kiphanlo
+
+            if prev_char_is_lomaji and is_lomaji(hanlo[0]):
                 " L, L -> 'L-L' "
-                if ji.si_khinsiann:
-                    buntin.append(KHIN_SIANN_HU)
+                if w.is_neutral:
+                    tokens.append(NEUTRAL_SYMBOL)
                 else:
-                    buntin.append(LIAN_JI_HU)
-            buntin.append(jihanlo)
-            ting_ji_si_lomaji = si_lomaji(jihanlo[-1])
-        return ''.join(buntin)
+                    tokens.append(CONNECT_SYMBOL)
 
-    def thiam(self, ji):
+            tokens.append(hanlo)
+            prev_char_is_lomaji = is_lomaji(hanlo[-1])
+        return ''.join(tokens)
+
+    def append(self, ji):
         self._ji.append(ji)
 
     def POJ(self):
-        sin_su = Su()
-        for ji in self:
-            sin_su.thiam(ji.POJ())
-        return sin_su
+        return Su([ji.POJ() for ji in self])
 
     def TL(self):
-        sin_su = Su()
-        for ji in self:
-            sin_su.thiam(ji.TL())
-        return sin_su
+        return Su([ji.TL() for ji in self])
+
 
     KIP = TL

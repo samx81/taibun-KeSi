@@ -1,14 +1,14 @@
 from .butkian.ku import Ku
 from .butkian.ku import TuiBeTse
 from .butkian.kongiong import normalize_taibun
-from .butkian.kongiong import 標點符號 as PIAUTIAM
-from .susia.kongke import thiah, SuSiaTshoNgoo
+from .butkian.kongiong import PUNC as PIAUTIAM
+from .susia.kongke import parse_syllable, RomanizationParseError
 
 
 def kam_haphuat(tsit_ji_lomaji):
     try:
-        thiah(tsit_ji_lomaji)
-    except SuSiaTshoNgoo:
+        parse_syllable(tsit_ji_lomaji)
+    except RomanizationParseError:
         return False
     return True
 

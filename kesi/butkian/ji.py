@@ -1,64 +1,47 @@
 # -*- coding: utf-8 -*-
-from kesi.susia.POJ import tsuanPOJ
-from kesi.susia.TL import tsuanTL
-from kesi.butkian.kongiong import KHIN_SIANN_HU
-from kesi.butkian.kongiong import si_lomaji
+from kesi.susia.POJ import toPOJ
+from kesi.susia.TL import toTL
+from kesi.butkian.kongiong import NEUTRAL_SYMBOL
+from kesi.butkian.kongiong import is_lomaji, normalize_taibun
+from unicodedata import normalize
 
 
 class Ji:
-
-    def __init__(self, hanlo, lomaji=None, si_khinsiann=False):
-        if si_khinsiann:
-            self.hanlo = '--{}'.format(hanlo)
-        else:
-            self.hanlo = hanlo
-
-        if lomaji and si_khinsiann:
-            self.lomaji = '--{}'.format(lomaji)
-        elif lomaji:
-            self.lomaji = lomaji
-        else:
-            self.lomaji = self.hanlo
+    
+    def __init__(self, hanlo, lomaji=None, is_neutral=False):
+        self.hanlo = hanlo
+        # si_khinsiann 是輕聲
+        if not lomaji:
+            lomaji = hanlo
+        self.CJK = not all(is_lomaji(c) for c in hanlo)
+        # print(hanlo, lomaji, self.CJK)
+        self.lomaji = lomaji
+        self.is_neutral = is_neutral
 
     def __eq__(self, other):
         return (
             self.hanlo == other.hanlo
             and self.lomaji == other.lomaji
-            and self.si_khinsiann == other.si_khinsiann
+            and self.is_neutral == other.is_neutral
         )
 
     @property
     def kiphanlo(self):
-        if self.si_khinsiann and not si_lomaji(self.hanlo[2]):
+        if self.is_neutral and not is_lomaji(self.hanlo[2]):
             return self.hanlo[2:]
         return self.hanlo
-
-    def POJ(self):
-        if self.si_khinsiann:
-            hanlo = self.hanlo[2:]
-            lomaji = self.lomaji[2:]
-        else:
-            hanlo = self.hanlo
-            lomaji = self.lomaji
+    
+    def convert_system(self, convert_func):
+        hanlo = self.hanlo
+        lomaji = self.lomaji
         return Ji(
-            tsuanPOJ(hanlo), tsuanPOJ(lomaji),
-            si_khinsiann=self.si_khinsiann
+            convert_func(hanlo), convert_func(lomaji),
+            is_neutral=self.is_neutral
         )
+    def POJ(self):
+        return self.convert_system(toPOJ)
 
     def TL(self):
-        if self.si_khinsiann:
-            hanlo = self.hanlo[2:]
-            lomaji = self.lomaji[2:]
-        else:
-            hanlo = self.hanlo
-            lomaji = self.lomaji
-        return Ji(
-            tsuanTL(hanlo), tsuanTL(lomaji),
-            si_khinsiann=self.si_khinsiann
-        )
+        return self.convert_system(toTL)
 
     KIP = TL
-
-    @property
-    def si_khinsiann(self):
-        return self.hanlo.startswith(KHIN_SIANN_HU)
