@@ -36,10 +36,6 @@ class Su:
 
         for char in self:
             text = getattr(char, mode)
-            # print(text, not self.remove_han_dash,  not char.CJK)
-            # print(text, self.remove_han_dash, (mode == 'hanlo' and not self.remove_han_dash), (mode == 'lomaji' and not char.CJK))
-            # if (mode == 'hanlo' and not self.remove_han_dash) or \
-            #     (mode == 'lomaji' and not char.CJK):
             if not self.remove_han_dash or not char.CJK:
                 if char.is_neutral:
                     " Mài thinn liân-jī-hû "

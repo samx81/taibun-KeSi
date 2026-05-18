@@ -14,6 +14,22 @@ from kesi.butkian.kongiong import (
 from kesi.butkian.su import Su
 from kesi.butkian.ji import Ji
 
+taibun_hint_shown = False
+def get_taibun_converter():
+    global taibun_hint_shown
+    try:
+        from taibun import Converter
+    except Exception as e:
+        if not taibun_hint_shown:
+            print(e)
+            print(
+                'This function need taibun support\n'
+                'Please install with `pip install taibun`'
+            )
+        taibun_hint_shown = True
+        return None
+    return Converter(tone_format='number')
+
 
 class Ku:
     """
@@ -27,10 +43,10 @@ class Ku:
     """
     
     _split_word_pattern = re.compile('(([^ ｜]*[^ ]｜[^ ][^ ｜]*) ?|[^ ]+)')
+    _multi_char_punctuation = re.compile(r'(\.\.\.)|(……)|(──)')
     _whitespace_pattern = re.compile(r'[^\S\n]+')
     _hyphen_pattern = re.compile(r'{}+'.format(CONNECT_SYMBOL))
     _digit_chars = set('0123456789')
-    _multi_char_punctuation = re.compile(r'(\.\.\.)|(……)|(──)')
 
     def __init__(self, hanlo=None, lomaji=None, remove_han_dash=False):
         self.remove_han_dash = remove_han_dash
@@ -68,29 +84,23 @@ class Ku:
 
             (
                 split_lomaji,
-                char_neutral_tone_flags,
+                char_neutral_tone_flags, 
                 word_boundary_flags,
             ) = self._analyze_sentence(lomaji)
 
             if len(split_hanlo) != len(split_lomaji):
-                han_output = []
-                tran_output = []
-                max_len = max(len(split_hanlo), len(split_lomaji))
+                han_align, lomaji_align, hint_align = self.align_error_tokens(split_hanlo, split_lomaji)
+                hint_align = ' | '.join(hint_align)
 
-                for i in range(max_len):
-                    h = split_hanlo[i] if i < len(split_hanlo) else ''
-                    t = split_lomaji[i] if i < len(split_lomaji) else ''
-                    han_len = sum(1 if is_lomaji(c) else 2 for c in h)
-                    common_len = max(han_len, len(normalize_taibun(t)))
-                    han_output.append(h.ljust(common_len - len(h)))
-                    tran_output.append(t.ljust(common_len))
-
-                raise TuiBeTse(
-                    f'tokens not matched: '
+                exc_msg = ( 
+                    f'Tokens not matched -> '
                     f'Hanlo tokens: {len(split_hanlo)}, lomaji tokens: {len(split_lomaji)}\n'
-                    f"{' | '.join(han_output)}\n{' | '.join(tran_output)}\n"
-                    f"{hanlo}\n{lomaji}"
-                )
+                    f"{' | '.join(han_align)}\n{' | '.join(lomaji_align)}\n" )
+                if '^' in set(hint_align):
+                    exc_msg += f"{hint_align}\n"
+                # exc_msg += f"{hanlo}\n{lomaji}\n"
+
+                raise TuiBeTse(exc_msg)
 
             grouped_hanlo, _ = self._group_words(
                 split_hanlo,
@@ -124,6 +134,27 @@ class Ku:
 
     def __eq__(self, other):
         return self._su == other._su
+    
+    def align_error_tokens(self, split_hanlo, split_lomaji):
+        han_align = []
+        lomaji_align = []
+        hint_align = []
+        max_len = max(len(split_hanlo), len(split_lomaji))
+        taibun_conv = get_taibun_converter()
+        taibun_dict = taibun_conv.word_dict.word_dict if taibun_conv else {}
+        for i in range(max_len):
+            h = split_hanlo[i] if i < len(split_hanlo) else ''
+            t = split_lomaji[i] if i < len(split_lomaji) else ''
+            arrow = '' if taibun_conv and h and t and taibun_dict.get(h) == taibun_conv.to_mark(t) else '^'
+
+            han_len = sum(1 if is_lomaji(c) else 2 for c in h)
+            common_len = max(han_len, len(normalize_taibun(t)))
+
+            han_align.append(h.ljust(common_len - len(h)))
+            lomaji_align.append(t.ljust(common_len))
+            hint_align.append(arrow.ljust(common_len))
+
+        return han_align, lomaji_align, hint_align
 
     def _build_su_list(self, words, word_neutral_tones):
         su_list = []
@@ -180,7 +211,6 @@ class Ku:
 
     @property
     def hanlo(self):
-        print(self.remove_han_dash)
         return self.format_string('hanlo', self.remove_han_dash)
 
     @property
@@ -193,8 +223,7 @@ class Ku:
 
     def iter_chars(self):
         """
-        Equivalent to:
-        臺灣言語工具.拆文分析器.篩出字物件
+        Equivalent to: 臺灣言語工具.拆文分析器.篩出字物件
         """
         for word in self:
             yield from word

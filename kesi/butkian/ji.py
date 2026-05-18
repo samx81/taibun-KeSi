@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
 from kesi.susia.POJ import toPOJ
 from kesi.susia.TL import toTL
-from kesi.butkian.kongiong import NEUTRAL_SYMBOL
-from kesi.butkian.kongiong import is_lomaji, normalize_taibun
-from unicodedata import normalize
+from kesi.butkian.kongiong import is_lomaji
 
 
 class Ji:
