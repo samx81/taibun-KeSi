@@ -1,5 +1,6 @@
 import re
 from typing import Literal
+from dataclasses import dataclass
 
 from kesi.butkian.kongiong import (
     COMPOSITION_SYMBOL,
@@ -9,6 +10,8 @@ from kesi.butkian.kongiong import (
     is_roman,
     is_bopomofo,
     is_lomaji,
+    is_han,
+    norm_diacritic,
     normalize_taibun,
 )
 from kesi.butkian.su import Su
@@ -30,6 +33,12 @@ def get_taibun_converter():
         return None
     return Converter(tone_format='number')
 
+@dataclass
+class ErrInfo:
+    han_tokens: list[str]
+    tailo_tokens: list[str]
+    message: str
+
 
 class Ku:
     """
@@ -48,8 +57,10 @@ class Ku:
     _hyphen_pattern = re.compile(r'{}+'.format(CONNECT_SYMBOL))
     _digit_chars = set('0123456789')
 
-    def __init__(self, hanlo=None, lomaji=None, remove_han_dash=False):
+    def __init__(self, hanlo=None, lomaji=None, remove_han_dash=False, raise_unmatch=True):
         self.remove_han_dash = remove_han_dash
+        self.err_info = None
+
         if hanlo is not None:
             hanlo = normalize_taibun(hanlo)
         if lomaji is not None:
@@ -99,8 +110,10 @@ class Ku:
                 if '^' in set(hint_align):
                     exc_msg += f"{hint_align}\n"
                 # exc_msg += f"{hanlo}\n{lomaji}\n"
-
-                raise TuiBeTse(exc_msg)
+                if raise_unmatch:
+                    raise TuiBeTse(exc_msg)
+                else:
+                    self.err_info = ErrInfo(split_hanlo, split_lomaji, exc_msg)
 
             grouped_hanlo, _ = self._group_words(
                 split_hanlo,
@@ -147,8 +160,8 @@ class Ku:
             t = split_lomaji[i] if i < len(split_lomaji) else ''
             arrow = '' if taibun_conv and h and t and taibun_dict.get(h) == taibun_conv.to_mark(t) else '^'
 
-            han_len = sum(1 if is_lomaji(c) else 2 for c in h)
-            common_len = max(han_len, len(normalize_taibun(t)))
+            han_len = sum(2 if is_han(c) else 1 for c in h)
+            common_len = max(han_len, len(norm_diacritic(t)))
 
             han_align.append(h.ljust(common_len - len(h)))
             lomaji_align.append(t.ljust(common_len))

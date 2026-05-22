@@ -29,6 +29,12 @@ PUNC_NEW_SENT = (
     {';', '；', '﹔', }
 )
 
+punctuation_mapping = {
+    '。':'.', '．':' ', '，':',', '、':',', '！':'!', '？':'?', '；':';', '：':':',
+    '）':')', '］':']', '】':']', '（':'(', '［':'[', '【':'['
+}
+full_width_punc = "「」〈〉《》『』～・" + ''.join(punctuation_mapping.keys())
+
 NON_PRINTABLE_CHARS = re.compile(
     r'[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]'
 )
@@ -73,6 +79,16 @@ _統一碼羅馬字類 = {'Ll', 'Lu', 'Mn'}
 
 def is_lomaji(jiguan):
     return is_roman(jiguan) or jiguan.isdigit()
+
+def is_han(char):
+    try:
+        cat = unicodedata.category(char)
+    except TypeError:
+        return False
+    return cat == 'Lo' or char in full_width_punc
+
+def norm_diacritic(s):
+    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
 
 
 def is_roman(char):
