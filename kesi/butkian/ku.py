@@ -1,4 +1,5 @@
 import re
+import shutil
 from typing import Literal
 from dataclasses import dataclass
 
@@ -101,14 +102,18 @@ class Ku:
 
             if len(split_hanlo) != len(split_lomaji):
                 han_align, lomaji_align, hint_align = self.align_error_tokens(split_hanlo, split_lomaji)
-                hint_align = ' | '.join(hint_align)
+
+                terminal_width = shutil.get_terminal_size().columns
+                terminal_width //= 10
 
                 exc_msg = ( 
                     f'Tokens not matched -> '
                     f'Hanlo tokens: {len(split_hanlo)}, lomaji tokens: {len(split_lomaji)}\n'
-                    f"{' | '.join(han_align)}\n{' | '.join(lomaji_align)}\n" )
-                if '^' in set(hint_align):
-                    exc_msg += f"{hint_align}\n"
+                )
+                for sub_i in range(0, len(han_align), terminal_width):
+                    sub_i_end = sub_i+terminal_width
+                    exc_msg += f"| {' | '.join(han_align[sub_i:sub_i_end])} |\n| {' | '.join(lomaji_align[sub_i:sub_i_end])} |\n" 
+                    exc_msg += f"| {' | '.join(hint_align[sub_i:sub_i_end])} |\n"
                 # exc_msg += f"{hanlo}\n{lomaji}\n"
                 if raise_unmatch:
                     raise TuiBeTse(exc_msg)
@@ -158,7 +163,7 @@ class Ku:
         for i in range(max_len):
             h = split_hanlo[i] if i < len(split_hanlo) else ''
             t = split_lomaji[i] if i < len(split_lomaji) else ''
-            arrow = '' if taibun_conv and h and t and taibun_dict.get(h) == taibun_conv.to_mark(t) else '^'
+            arrow = '' if (h == t) or (taibun_conv and h and t and taibun_dict.get(h) == taibun_conv.to_mark(t)) else '^'
 
             han_len = sum(2 if is_han(c) else 1 for c in h)
             common_len = max(han_len, len(norm_diacritic(t)))
