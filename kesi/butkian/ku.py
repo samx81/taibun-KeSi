@@ -223,7 +223,11 @@ class Ku:
             #
             if prev_word_endswith_lomaji and is_lomaji(word[0]):
                 output.append(' ')
+            if output and output[-1] == ' ' and word in HALF_WIDTH_PUNC:
+                output.pop()
             output.append(word)
+            
+            # TODO: change mode
             if word in HALF_WIDTH_PUNC:
                 output.append(' ')
             prev_word_endswith_lomaji = is_lomaji(word[-1])
