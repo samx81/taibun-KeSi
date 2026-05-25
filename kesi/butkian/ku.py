@@ -7,6 +7,7 @@ from kesi.butkian.kongiong import (
     COMPOSITION_SYMBOL,
     CONNECT_SYMBOL,
     TONE_SYMBOL,
+    HALF_WIDTH_PUNC,
     PUNC,
     is_roman,
     is_bopomofo,
@@ -223,6 +224,8 @@ class Ku:
             if prev_word_endswith_lomaji and is_lomaji(word[0]):
                 output.append(' ')
             output.append(word)
+            if word in HALF_WIDTH_PUNC:
+                output.append(' ')
             prev_word_endswith_lomaji = is_lomaji(word[-1])
         return ''.join(output)
 
